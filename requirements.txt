@@ -3,7 +3,7 @@ gymnasium[classic-control]
 numpy
 torch
 matplotlib
-keyboard
+pygame
 # Development tools
 black
 ruff
