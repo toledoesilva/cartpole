@@ -61,7 +61,9 @@ def save_state(state_path: str, episodes_completed: int, best_avg: float) -> Non
         pass
 
 
-def _save_checkpoint(checkpoint_path: str, agent: PPOAgent, episodes_completed: int, best_avg: float) -> None:
+def _save_checkpoint(
+    checkpoint_path: str, agent: PPOAgent, episodes_completed: int, best_avg: float
+) -> None:
     """Save a full checkpoint including model, optimizers and RNG states.
 
     This allows exact resumption of training dynamics (optimizer states and RNGs).
@@ -86,7 +88,9 @@ def _save_checkpoint(checkpoint_path: str, agent: PPOAgent, episodes_completed: 
         pass
 
 
-def _load_checkpoint(checkpoint_path: str, agent: PPOAgent) -> dict | None:
+def _load_checkpoint(
+    checkpoint_path: str, agent: PPOAgent
+) -> dict | None:  # noqa: C901
     """Attempt to load a full checkpoint and restore model+optimizers+RNGs.
 
     Returns the loaded metadata dict on success, or None on failure.
@@ -121,7 +125,7 @@ def _load_checkpoint(checkpoint_path: str, agent: PPOAgent) -> dict | None:
         return None
 
 
-def _run_training_loop(
+def _run_training_loop(  # noqa: C901
     env: CustomCartPoleEnv,
     agent: PPOAgent,
     start_episode: int,
@@ -155,9 +159,9 @@ def _run_training_loop(
             # Move the input tensor to the agent's device so model and data
             # reside on the same device (important for GPU/Colab usage).
             state_tensor = (
-                torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(
-                    agent.device
-                )
+                torch.tensor(np.array(state), dtype=torch.float32)
+                .unsqueeze(0)
+                .to(agent.device)
             )
             logits, value = agent.model(state_tensor)
             dist = torch.distributions.Categorical(logits=logits)
@@ -193,13 +197,15 @@ def _run_training_loop(
             0
             if done
             else agent.model(
-                torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(
-                    agent.device
-                )
+                torch.tensor(np.array(state), dtype=torch.float32)
+                .unsqueeze(0)
+                .to(agent.device)
             )[1].item()
         )
         values.append(last_value)
-        advantages = agent.compute_advantages(np.array(rewards), np.array(values), np.array(dones))
+        advantages = agent.compute_advantages(
+            np.array(rewards), np.array(values), np.array(dones)
+        )
         returns = advantages + np.array(values[:-1])
 
         trajectories = {
@@ -216,7 +222,9 @@ def _run_training_loop(
         else:
             avg_reward = 0.0
 
-        print(f"Iter {episode + 1}/{episodes} | env_eps: {env_episodes_this_iter} | Avg100: {avg_reward}")
+        print(
+            f"Iter {episode + 1}/{episodes} | env_eps: {env_episodes_this_iter} | Avg100: {avg_reward}"
+        )
 
         if avg_reward > best_avg_reward:
             best_avg_reward = avg_reward
@@ -225,20 +233,28 @@ def _run_training_loop(
             # Also save a full checkpoint (model + optimizers + RNGs) so we can
             # resume training exactly from this state.
             try:
-                checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
+                checkpoint_path = os.path.join(
+                    os.path.dirname(save_path) or ".", "checkpoint.pt"
+                )
                 _save_checkpoint(checkpoint_path, agent, episode + 1, best_avg_reward)
             except Exception:
                 pass
 
         try:
             if latest_interval > 0 and ((episode + 1) % latest_interval) == 0:
-                latest_path = os.path.join(os.path.dirname(save_path) or ".", "latest_model.pt")
+                latest_path = os.path.join(
+                    os.path.dirname(save_path) or ".", "latest_model.pt"
+                )
                 os.makedirs(os.path.dirname(latest_path), exist_ok=True)
                 torch.save(agent.model.state_dict(), latest_path)
                 # Also write a full checkpoint for safer resumes
                 try:
-                    checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
-                    _save_checkpoint(checkpoint_path, agent, episode + 1, best_avg_reward)
+                    checkpoint_path = os.path.join(
+                        os.path.dirname(save_path) or ".", "checkpoint.pt"
+                    )
+                    _save_checkpoint(
+                        checkpoint_path, agent, episode + 1, best_avg_reward
+                    )
                 except Exception:
                     pass
         except Exception:
@@ -249,7 +265,7 @@ def _run_training_loop(
     return all_rewards, best_avg_reward
 
 
-def main(
+def main(  # noqa: C901
     episodes: int = 1000,
     rollout_length: int = 2048,
     save_path: str = "models/best_model.pt",
@@ -279,7 +295,9 @@ def main(
             # (extremely large) or non-positive, ignore it so it doesn't block saves.
             loaded_best = float(prev.get("best_avg_reward", best_avg_reward))
             if loaded_best > 1e6 or loaded_best <= 0.0 or not np.isfinite(loaded_best):
-                print(f"Warning: loaded best_avg_reward={loaded_best} invalid; resetting to -inf.")
+                print(
+                    f"Warning: loaded best_avg_reward={loaded_best} invalid; resetting to -inf."
+                )
                 best_avg_reward = -float("inf")
             else:
                 best_avg_reward = loaded_best
@@ -290,14 +308,20 @@ def main(
     # back to loading model weights from `latest_model.pt` or `save_path` so we
     # don't reinitialize the network and experience a drop in performance.
     if episodes_completed > 0:
-        checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
+        checkpoint_path = os.path.join(
+            os.path.dirname(save_path) or ".", "checkpoint.pt"
+        )
         loaded_meta = None
         if os.path.exists(checkpoint_path):
             loaded_meta = _load_checkpoint(checkpoint_path, agent)
             if loaded_meta is not None:
-                print(f"Resuming training: loaded full checkpoint from {checkpoint_path}")
+                print(
+                    f"Resuming training: loaded full checkpoint from {checkpoint_path}"
+                )
         if loaded_meta is None:
-            latest_path = os.path.join(os.path.dirname(save_path) or ".", "latest_model.pt")
+            latest_path = os.path.join(
+                os.path.dirname(save_path) or ".", "latest_model.pt"
+            )
             ckpt_to_load = None
             if os.path.exists(latest_path):
                 ckpt_to_load = latest_path
@@ -305,10 +329,16 @@ def main(
                 ckpt_to_load = save_path
             if ckpt_to_load is not None:
                 try:
-                    agent.model.load_state_dict(torch.load(ckpt_to_load, map_location=agent.device))
-                    print(f"Resuming training: loaded model weights from {ckpt_to_load}")
+                    agent.model.load_state_dict(
+                        torch.load(ckpt_to_load, map_location=agent.device)
+                    )
+                    print(
+                        f"Resuming training: loaded model weights from {ckpt_to_load}"
+                    )
                 except Exception as e:
-                    print(f"Warning: failed to load model checkpoint '{ckpt_to_load}': {e}")
+                    print(
+                        f"Warning: failed to load model checkpoint '{ckpt_to_load}': {e}"
+                    )
     # Loop from episodes_completed to target `episodes` so we can resume
 
     # Loop from episodes_completed to target `episodes` so we can resume
