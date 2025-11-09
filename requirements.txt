@@ -1,0 +1,9 @@
+gymnasium
+gymnasium[classic-control]
+numpy
+torch
+matplotlib
+keyboard
+# Development tools
+black
+ruff

@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+
+[tool.ruff]
+# Keep ruff a bit more permissive to avoid flagging Black-formatted lines unnecessarily.
+line-length = 120
+select = ["E", "F", "W", "C", "N", "B"]
+
