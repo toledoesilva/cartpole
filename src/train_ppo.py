@@ -152,8 +152,12 @@ def _run_training_loop(
         env_episodes_this_iter = 0
 
         for _ in range(rollout_length):
-            state_tensor = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(
-                0
+            # Move the input tensor to the agent's device so model and data
+            # reside on the same device (important for GPU/Colab usage).
+            state_tensor = (
+                torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(
+                    agent.device
+                )
             )
             logits, value = agent.model(state_tensor)
             dist = torch.distributions.Categorical(logits=logits)
@@ -166,7 +170,10 @@ def _run_training_loop(
             actions.append(action)
             rewards.append(reward)
             dones.append(done)
-            log_probs.append(dist.log_prob(torch.tensor(action)).item())
+            # Ensure the action tensor is on the same device as the model/distribution
+            log_probs.append(
+                dist.log_prob(torch.tensor(action, device=agent.device)).item()
+            )
             values.append(value.item())
 
             per_env_return += float(reward)
@@ -181,10 +188,15 @@ def _run_training_loop(
                 reset_ret = env.reset()
                 state = _unwrap_reset(reset_ret)
 
+        # Compute a bootstrapped last value; move inputs to agent.device first.
         last_value = (
             0
             if done
-            else agent.model(torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0))[1].item()
+            else agent.model(
+                torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(
+                    agent.device
+                )
+            )[1].item()
         )
         values.append(last_value)
         advantages = agent.compute_advantages(np.array(rewards), np.array(values), np.array(dones))
