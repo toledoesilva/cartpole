@@ -15,6 +15,7 @@ from src.env_utils import CustomCartPoleEnv
 from src.ppo_agent import PPOAgent
 import json
 import time
+import random
 
 
 def _unwrap_reset(reset_ret: Any):
@@ -58,6 +59,66 @@ def save_state(state_path: str, episodes_completed: int, best_avg: float) -> Non
     except Exception:
         # non-critical: don't crash training because state couldn't be written
         pass
+
+
+def _save_checkpoint(checkpoint_path: str, agent: PPOAgent, episodes_completed: int, best_avg: float) -> None:
+    """Save a full checkpoint including model, optimizers and RNG states.
+
+    This allows exact resumption of training dynamics (optimizer states and RNGs).
+    The function is best-effort and will not raise on failure.
+    """
+    try:
+        os.makedirs(os.path.dirname(checkpoint_path) or ".", exist_ok=True)
+        ckpt = {
+            "model_state_dict": agent.model.state_dict(),
+            "policy_optimizer": agent.policy_optimizer.state_dict(),
+            "value_optimizer": agent.value_optimizer.state_dict(),
+            "episodes_completed": int(episodes_completed),
+            "best_avg_reward": float(best_avg),
+            "py_random_state": random.getstate(),
+            "np_random_state": np.random.get_state(),
+            "torch_rng_state": torch.get_rng_state(),
+        }
+        # Save to disk using torch so tensors serialize properly
+        torch.save(ckpt, checkpoint_path)
+    except Exception:
+        # non-critical
+        pass
+
+
+def _load_checkpoint(checkpoint_path: str, agent: PPOAgent) -> dict | None:
+    """Attempt to load a full checkpoint and restore model+optimizers+RNGs.
+
+    Returns the loaded metadata dict on success, or None on failure.
+    """
+    try:
+        ckpt = torch.load(checkpoint_path, map_location=agent.device)
+        if "model_state_dict" in ckpt:
+            agent.model.load_state_dict(ckpt["model_state_dict"])
+        # restore optimizers if keys present
+        if "policy_optimizer" in ckpt:
+            try:
+                agent.policy_optimizer.load_state_dict(ckpt["policy_optimizer"])
+            except Exception:
+                pass
+        if "value_optimizer" in ckpt:
+            try:
+                agent.value_optimizer.load_state_dict(ckpt["value_optimizer"])
+            except Exception:
+                pass
+        # restore RNGs
+        try:
+            if "py_random_state" in ckpt:
+                random.setstate(ckpt["py_random_state"])
+            if "np_random_state" in ckpt:
+                np.random.set_state(ckpt["np_random_state"])
+            if "torch_rng_state" in ckpt:
+                torch.set_rng_state(ckpt["torch_rng_state"])
+        except Exception:
+            pass
+        return ckpt
+    except Exception:
+        return None
 
 
 def _run_training_loop(
@@ -149,12 +210,25 @@ def _run_training_loop(
             best_avg_reward = avg_reward
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             torch.save(agent.model.state_dict(), save_path)
+            # Also save a full checkpoint (model + optimizers + RNGs) so we can
+            # resume training exactly from this state.
+            try:
+                checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
+                _save_checkpoint(checkpoint_path, agent, episode + 1, best_avg_reward)
+            except Exception:
+                pass
 
         try:
             if latest_interval > 0 and ((episode + 1) % latest_interval) == 0:
                 latest_path = os.path.join(os.path.dirname(save_path) or ".", "latest_model.pt")
                 os.makedirs(os.path.dirname(latest_path), exist_ok=True)
                 torch.save(agent.model.state_dict(), latest_path)
+                # Also write a full checkpoint for safer resumes
+                try:
+                    checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
+                    _save_checkpoint(checkpoint_path, agent, episode + 1, best_avg_reward)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -199,6 +273,30 @@ def main(
                 best_avg_reward = loaded_best
         except Exception:
             episodes_completed = 0
+    # If we're resuming from a previous run, attempt to load a full checkpoint
+    # (model + optimizers + RNGs). If a full checkpoint is not available, fall
+    # back to loading model weights from `latest_model.pt` or `save_path` so we
+    # don't reinitialize the network and experience a drop in performance.
+    if episodes_completed > 0:
+        checkpoint_path = os.path.join(os.path.dirname(save_path) or ".", "checkpoint.pt")
+        loaded_meta = None
+        if os.path.exists(checkpoint_path):
+            loaded_meta = _load_checkpoint(checkpoint_path, agent)
+            if loaded_meta is not None:
+                print(f"Resuming training: loaded full checkpoint from {checkpoint_path}")
+        if loaded_meta is None:
+            latest_path = os.path.join(os.path.dirname(save_path) or ".", "latest_model.pt")
+            ckpt_to_load = None
+            if os.path.exists(latest_path):
+                ckpt_to_load = latest_path
+            elif os.path.exists(save_path):
+                ckpt_to_load = save_path
+            if ckpt_to_load is not None:
+                try:
+                    agent.model.load_state_dict(torch.load(ckpt_to_load, map_location=agent.device))
+                    print(f"Resuming training: loaded model weights from {ckpt_to_load}")
+                except Exception as e:
+                    print(f"Warning: failed to load model checkpoint '{ckpt_to_load}': {e}")
     # Loop from episodes_completed to target `episodes` so we can resume
 
     # Loop from episodes_completed to target `episodes` so we can resume
